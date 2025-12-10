@@ -1,0 +1,24 @@
+﻿@page "/"
+@using Bit2Sky.Bit2EHR.ApiClient
+@using Bit2Sky.Bit2EHR.Maui.Services.Navigation
+@inherits Bit2EHRMainLayoutPageComponentBase
+
+@code
+{
+    protected override void OnInitialized()
+    {
+        var navigationService = Resolve<INavigationService>();
+
+        var context = Resolve<IApplicationContext>();
+        
+        var isHost = context.LoginInfo.Tenant == null;
+        
+        if (isHost)
+        {
+            navigationService.NavigateTo("/" + NavigationUrlConsts.HostDashboard);
+            return;
+        }
+        
+        navigationService.NavigateTo("/" + NavigationUrlConsts.TenantDashboard);
+    }
+}

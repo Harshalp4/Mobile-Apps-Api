@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "Bit2Sky.Bit2EHR.Migrator": {
+      "commandName": "Project"
+    },
+    "Docker": {
+      "commandName": "Docker",
+      "environmentVariables": {
+        "ASPNETCORE_Docker_Enabled": "true",
+        "ConnectionStrings__Default": "Server=mssqlDb;Database=Bit2EHRDb;User=sa;Password=Super_Encrypted_Passw0rd!"
+      }
+    }
+  }
+}
