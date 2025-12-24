@@ -15,6 +15,11 @@ public class ChaiCountShopSettings : FullAuditedEntity<Guid>, IMustHaveTenant
     public int TenantId { get; set; }
 
     /// <summary>
+    /// User ID to identify which logged-in user owns these settings
+    /// </summary>
+    public long? UserId { get; set; }
+
+    /// <summary>
     /// Client-side unique identifier for sync
     /// </summary>
     [StringLength(100)]

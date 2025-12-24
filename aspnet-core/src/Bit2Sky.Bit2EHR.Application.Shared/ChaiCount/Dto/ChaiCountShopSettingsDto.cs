@@ -8,6 +8,7 @@ namespace Bit2Sky.Bit2EHR.ChaiCount.Dto;
 /// </summary>
 public class ChaiCountShopSettingsDto : EntityDto<Guid>
 {
+    public long? UserId { get; set; }
     public string ClientId { get; set; }
     public string ShopName { get; set; }
     public string OwnerName { get; set; }
@@ -39,6 +40,7 @@ public class ChaiCountShopSettingsDto : EntityDto<Guid>
 /// </summary>
 public class SyncShopSettingsInput
 {
+    public long? UserId { get; set; }
     public string ClientId { get; set; }
     public string ShopName { get; set; }
     public string OwnerName { get; set; }

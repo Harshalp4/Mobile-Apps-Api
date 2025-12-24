@@ -94,6 +94,23 @@ public interface IChaiCountAppService : IApplicationService
     /// </summary>
     Task<List<ChaiCountItemUsageDto>> GetItemUsage();
 
+    // ============ Stock Purchases (Expenses) APIs ============
+
+    /// <summary>
+    /// Sync stock purchases from mobile to server
+    /// </summary>
+    Task<SyncResult> SyncStockPurchases(SyncStockPurchasesInput input);
+
+    /// <summary>
+    /// Get stock purchases (expenses)
+    /// </summary>
+    Task<List<ChaiCountStockPurchaseDto>> GetStockPurchases(DateTime? fromDate, DateTime? toDate);
+
+    /// <summary>
+    /// Get profit report (Revenue - Expenses)
+    /// </summary>
+    Task<ProfitReportDto> GetProfitReport(GetProfitReportInput input);
+
     // ============ Dashboard & Analytics APIs ============
 
     /// <summary>

@@ -66,6 +66,7 @@ public class Bit2EHRDbContext : AbpZeroDbContext<Tenant, Role, User, Bit2EHRDbCo
     public virtual DbSet<ChaiCountOffer> ChaiCountOffers { get; set; }
     public virtual DbSet<ChaiCountLoyaltyConfig> ChaiCountLoyaltyConfig { get; set; }
     public virtual DbSet<ChaiCountItemUsage> ChaiCountItemUsage { get; set; }
+    public virtual DbSet<ChaiCountStockPurchase> ChaiCountStockPurchases { get; set; }
 
     // FinTrack entities
     public virtual DbSet<FtBankAccount> FtBankAccounts { get; set; }
@@ -230,6 +231,16 @@ public class Bit2EHRDbContext : AbpZeroDbContext<Tenant, Role, User, Bit2EHRDbCo
             b.HasIndex(e => new { e.TenantId, e.ClientId }).IsUnique();
             b.HasIndex(e => new { e.TenantId, e.MenuItemClientId });
             b.Property(e => e.QuantityPerSale).HasPrecision(18, 4);
+        });
+
+        modelBuilder.Entity<ChaiCountStockPurchase>(b =>
+        {
+            b.HasIndex(e => new { e.TenantId, e.ClientId }).IsUnique();
+            b.HasIndex(e => new { e.TenantId, e.PurchaseDate });
+            b.HasIndex(e => new { e.TenantId, e.InventoryItemId });
+            b.Property(e => e.Quantity).HasPrecision(18, 2);
+            b.Property(e => e.CostPerUnit).HasPrecision(18, 2);
+            b.Property(e => e.TotalCost).HasPrecision(18, 2);
         });
 
         // FinTrack entity configurations

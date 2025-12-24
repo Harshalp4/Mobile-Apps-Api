@@ -29,6 +29,7 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
     private readonly IRepository<ChaiCountOffer, Guid> _offerRepository;
     private readonly IRepository<ChaiCountLoyaltyConfig, Guid> _loyaltyConfigRepository;
     private readonly IRepository<ChaiCountItemUsage, Guid> _itemUsageRepository;
+    private readonly IRepository<ChaiCountStockPurchase, Guid> _stockPurchaseRepository;
     private readonly IEmailSender _emailSender;
 
     public ChaiCountAppService(
@@ -41,6 +42,7 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
         IRepository<ChaiCountOffer, Guid> offerRepository,
         IRepository<ChaiCountLoyaltyConfig, Guid> loyaltyConfigRepository,
         IRepository<ChaiCountItemUsage, Guid> itemUsageRepository,
+        IRepository<ChaiCountStockPurchase, Guid> stockPurchaseRepository,
         IEmailSender emailSender)
     {
         _itemRepository = itemRepository;
@@ -52,6 +54,7 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
         _offerRepository = offerRepository;
         _loyaltyConfigRepository = loyaltyConfigRepository;
         _itemUsageRepository = itemUsageRepository;
+        _stockPurchaseRepository = stockPurchaseRepository;
         _emailSender = emailSender;
     }
 
@@ -382,30 +385,36 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
                 CreationTime = x.CreationTime,
                 LastModificationTime = x.LastModificationTime
             }).ToList(),
-            Sales = sales.Select(s => new ChaiCountSaleDto
-            {
-                Id = s.Id,
-                ClientId = s.ClientId,
-                SaleDate = s.SaleDate,
-                TotalAmount = s.TotalAmount,
-                TotalItems = s.TotalItems,
-                CustomerId = s.CustomerId,
-                Notes = s.Notes,
-                IsDayClosed = s.IsDayClosed,
-                LastSyncedAt = s.LastSyncedAt,
-                CreationTime = s.CreationTime,
-                SaleItems = s.SaleItems?.Select(si => new ChaiCountSaleItemDto
+            // Aggregate sales by date for mobile app
+            Sales = sales
+                .GroupBy(s => s.SaleDate.Date)
+                .Select(g => new ChaiCountSaleDto
                 {
-                    Id = si.Id,
-                    ClientId = si.ClientId,
-                    SaleId = si.SaleId,
-                    ItemId = si.ItemId,
-                    ItemName = si.ItemName,
-                    Quantity = si.Quantity,
-                    UnitPrice = si.UnitPrice,
-                    TotalAmount = si.TotalAmount
-                }).ToList()
-            }).ToList(),
+                    Id = g.First().Id,
+                    ClientId = g.Key.ToString("yyyy-MM-dd"),
+                    SaleDate = g.Key,
+                    TotalAmount = g.Sum(s => s.TotalAmount),
+                    TotalItems = g.Sum(s => s.TotalItems),
+                    CustomerId = null,
+                    Notes = $"Aggregated from {g.Count()} sales",
+                    IsDayClosed = g.Any(s => s.IsDayClosed),
+                    LastSyncedAt = g.Max(s => s.LastSyncedAt),
+                    CreationTime = g.Min(s => s.CreationTime),
+                    // Aggregate all sale items for this day
+                    SaleItems = g.SelectMany(s => s.SaleItems ?? new List<ChaiCountSaleItem>())
+                        .GroupBy(si => si.ItemName)
+                        .Select(sig => new ChaiCountSaleItemDto
+                        {
+                            Id = sig.First().Id,
+                            ClientId = sig.First().ClientId,
+                            SaleId = sig.First().SaleId,
+                            ItemId = sig.First().ItemId,
+                            ItemName = sig.Key,
+                            Quantity = sig.Sum(si => si.Quantity),
+                            UnitPrice = sig.First().UnitPrice,
+                            TotalAmount = sig.Sum(si => si.TotalAmount)
+                        }).ToList()
+                }).ToList(),
             Customers = customers.Select(c => new ChaiCountCustomerDto
             {
                 Id = c.Id,
@@ -1101,6 +1110,203 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
             TopCustomers = topCustomers,
             RevenueGrowthPercent = revenueGrowth,
             GeneratedAt = DateTime.UtcNow
+        };
+    }
+
+    // ============ Stock Purchase (Expenses) APIs ============
+
+    /// <summary>
+    /// Sync stock purchases from mobile to server
+    /// </summary>
+    public async Task<SyncResult> SyncStockPurchases(SyncStockPurchasesInput input)
+    {
+        var result = new SyncResult { SyncedRecords = new List<SyncedRecordInfo>() };
+
+        try
+        {
+            var tenantId = AbpSession.GetTenantId();
+
+            foreach (var purchaseDto in input.Purchases)
+            {
+                var existingPurchase = await _stockPurchaseRepository.FirstOrDefaultAsync(
+                    x => x.ClientId == purchaseDto.ClientId && x.TenantId == tenantId);
+
+                if (existingPurchase != null)
+                {
+                    // Update if client has newer data
+                    if (purchaseDto.LastSyncedAt > existingPurchase.LastSyncedAt)
+                    {
+                        existingPurchase.InventoryItemId = purchaseDto.InventoryItemId;
+                        existingPurchase.InventoryItemName = purchaseDto.InventoryItemName;
+                        existingPurchase.Emoji = purchaseDto.Emoji;
+                        existingPurchase.Quantity = purchaseDto.Quantity;
+                        existingPurchase.Unit = purchaseDto.Unit;
+                        existingPurchase.CostPerUnit = purchaseDto.CostPerUnit;
+                        existingPurchase.TotalCost = purchaseDto.TotalCost;
+                        existingPurchase.PurchaseDate = purchaseDto.PurchaseDate;
+                        existingPurchase.Note = purchaseDto.Note;
+                        existingPurchase.LastSyncedAt = DateTime.UtcNow;
+                        await _stockPurchaseRepository.UpdateAsync(existingPurchase);
+                    }
+
+                    result.SyncedRecords.Add(new SyncedRecordInfo
+                    {
+                        ClientId = purchaseDto.ClientId,
+                        ServerId = existingPurchase.Id,
+                        SyncedAt = DateTime.UtcNow
+                    });
+                }
+                else
+                {
+                    var newPurchase = new ChaiCountStockPurchase(
+                        Guid.NewGuid(),
+                        tenantId,
+                        purchaseDto.ClientId,
+                        purchaseDto.InventoryItemName,
+                        purchaseDto.Quantity,
+                        purchaseDto.Unit,
+                        purchaseDto.CostPerUnit,
+                        purchaseDto.TotalCost,
+                        purchaseDto.PurchaseDate,
+                        purchaseDto.InventoryItemId,
+                        purchaseDto.Emoji,
+                        purchaseDto.Note);
+
+                    await _stockPurchaseRepository.InsertAsync(newPurchase);
+
+                    result.SyncedRecords.Add(new SyncedRecordInfo
+                    {
+                        ClientId = purchaseDto.ClientId,
+                        ServerId = newPurchase.Id,
+                        SyncedAt = DateTime.UtcNow
+                    });
+                }
+            }
+
+            result.Success = true;
+            result.SyncedCount = result.SyncedRecords.Count;
+        }
+        catch (Exception ex)
+        {
+            result.Success = false;
+            result.ErrorMessage = ex.Message;
+            Logger.Error("Error syncing stock purchases", ex);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Get stock purchases (expenses)
+    /// </summary>
+    public async Task<List<ChaiCountStockPurchaseDto>> GetStockPurchases(DateTime? fromDate, DateTime? toDate)
+    {
+        var tenantId = AbpSession.GetTenantId();
+
+        var query = _stockPurchaseRepository.GetAll()
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted);
+
+        if (fromDate.HasValue)
+            query = query.Where(x => x.PurchaseDate >= fromDate.Value);
+        if (toDate.HasValue)
+            query = query.Where(x => x.PurchaseDate <= toDate.Value);
+
+        var purchases = await query.OrderByDescending(x => x.PurchaseDate).ToListAsync();
+
+        return purchases.Select(p => new ChaiCountStockPurchaseDto
+        {
+            Id = p.Id,
+            ClientId = p.ClientId,
+            InventoryItemId = p.InventoryItemId,
+            InventoryItemName = p.InventoryItemName,
+            Emoji = p.Emoji,
+            Quantity = p.Quantity,
+            Unit = p.Unit,
+            CostPerUnit = p.CostPerUnit,
+            TotalCost = p.TotalCost,
+            PurchaseDate = p.PurchaseDate,
+            Note = p.Note,
+            LastSyncedAt = p.LastSyncedAt
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Get profit report (Revenue - Expenses)
+    /// </summary>
+    public async Task<ProfitReportDto> GetProfitReport(GetProfitReportInput input)
+    {
+        var tenantId = AbpSession.GetTenantId();
+
+        // Get sales in date range
+        var sales = await _saleRepository.GetAll()
+            .Include(s => s.SaleItems)
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted)
+            .Where(x => x.SaleDate.Date >= input.FromDate.Date && x.SaleDate.Date <= input.ToDate.Date)
+            .ToListAsync();
+
+        // Get stock purchases (expenses) in date range
+        var purchases = await _stockPurchaseRepository.GetAll()
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted)
+            .Where(x => x.PurchaseDate.Date >= input.FromDate.Date && x.PurchaseDate.Date <= input.ToDate.Date)
+            .ToListAsync();
+
+        // Calculate totals
+        var totalRevenue = sales.Sum(s => s.TotalAmount);
+        var totalExpenses = purchases.Sum(p => p.TotalCost);
+        var profit = totalRevenue - totalExpenses;
+        var profitMargin = totalRevenue > 0 ? (profit / totalRevenue) * 100 : 0;
+
+        // Revenue breakdown by item
+        var allSaleItems = sales.SelectMany(s => s.SaleItems ?? new List<ChaiCountSaleItem>()).ToList();
+        var revenueByItem = allSaleItems
+            .GroupBy(si => si.ItemName)
+            .Select(g => new RevenueByItemDto
+            {
+                ItemName = g.Key,
+                Emoji = g.FirstOrDefault()?.ItemName?.Contains("Tea") == true ? "☕" : "🍵",
+                QuantitySold = g.Sum(si => si.Quantity),
+                Revenue = g.Sum(si => si.TotalAmount)
+            })
+            .OrderByDescending(x => x.Revenue)
+            .ToList();
+
+        // Expense breakdown by inventory item
+        var expenseByItem = purchases
+            .GroupBy(p => p.InventoryItemName)
+            .Select(g => new ExpenseByItemDto
+            {
+                ItemName = g.Key,
+                Emoji = g.FirstOrDefault()?.Emoji ?? "📦",
+                QuantityPurchased = g.Sum(p => p.Quantity),
+                Unit = g.FirstOrDefault()?.Unit ?? "",
+                TotalCost = g.Sum(p => p.TotalCost)
+            })
+            .OrderByDescending(x => x.TotalCost)
+            .ToList();
+
+        // Daily profit trend
+        var dates = Enumerable.Range(0, (input.ToDate - input.FromDate).Days + 1)
+            .Select(i => input.FromDate.AddDays(i).Date)
+            .ToList();
+
+        var dailyTrend = dates.Select(date => new DailyProfitDto
+        {
+            Date = date,
+            Revenue = sales.Where(s => s.SaleDate.Date == date).Sum(s => s.TotalAmount),
+            Expenses = purchases.Where(p => p.PurchaseDate.Date == date).Sum(p => p.TotalCost),
+            Profit = sales.Where(s => s.SaleDate.Date == date).Sum(s => s.TotalAmount)
+                   - purchases.Where(p => p.PurchaseDate.Date == date).Sum(p => p.TotalCost)
+        }).ToList();
+
+        return new ProfitReportDto
+        {
+            TotalRevenue = totalRevenue,
+            TotalExpenses = totalExpenses,
+            Profit = profit,
+            ProfitMargin = profitMargin,
+            RevenueByItem = revenueByItem,
+            ExpenseByItem = expenseByItem,
+            DailyTrend = dailyTrend
         };
     }
 
