@@ -386,22 +386,14 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
                 LastModificationTime = x.LastModificationTime
             }).ToList(),
             // Aggregate sales by date for mobile app
+            // Calculate totals from SaleItems (more accurate than Sale.TotalAmount which may be stale)
             Sales = sales
                 .GroupBy(s => s.SaleDate.Date)
-                .Select(g => new ChaiCountSaleDto
-                {
-                    Id = g.First().Id,
-                    ClientId = g.Key.ToString("yyyy-MM-dd"),
-                    SaleDate = g.Key,
-                    TotalAmount = g.Sum(s => s.TotalAmount),
-                    TotalItems = g.Sum(s => s.TotalItems),
-                    CustomerId = null,
-                    Notes = $"Aggregated from {g.Count()} sales",
-                    IsDayClosed = g.Any(s => s.IsDayClosed),
-                    LastSyncedAt = g.Max(s => s.LastSyncedAt),
-                    CreationTime = g.Min(s => s.CreationTime),
-                    // Aggregate all sale items for this day
-                    SaleItems = g.SelectMany(s => s.SaleItems ?? new List<ChaiCountSaleItem>())
+                .Select(g => {
+                    // Get all sale items for this day
+                    var allItems = g.SelectMany(s => s.SaleItems ?? new List<ChaiCountSaleItem>()).ToList();
+                    // Aggregate items by name
+                    var aggregatedItems = allItems
                         .GroupBy(si => si.ItemName)
                         .Select(sig => new ChaiCountSaleItemDto
                         {
@@ -413,7 +405,26 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
                             Quantity = sig.Sum(si => si.Quantity),
                             UnitPrice = sig.First().UnitPrice,
                             TotalAmount = sig.Sum(si => si.TotalAmount)
-                        }).ToList()
+                        }).ToList();
+
+                    // Calculate totals from actual items (not from possibly stale Sale record)
+                    var totalFromItems = allItems.Sum(si => si.TotalAmount);
+                    var itemCountFromItems = allItems.Sum(si => si.Quantity);
+
+                    return new ChaiCountSaleDto
+                    {
+                        Id = g.First().Id,
+                        ClientId = g.Key.ToString("yyyy-MM-dd"),
+                        SaleDate = g.Key,
+                        TotalAmount = totalFromItems,  // Use calculated total from items
+                        TotalItems = itemCountFromItems,  // Use calculated count from items
+                        CustomerId = null,
+                        Notes = $"Aggregated from {g.Count()} sales, {allItems.Count} items",
+                        IsDayClosed = g.Any(s => s.IsDayClosed),
+                        LastSyncedAt = g.Max(s => s.LastSyncedAt),
+                        CreationTime = g.Min(s => s.CreationTime),
+                        SaleItems = aggregatedItems
+                    };
                 }).ToList(),
             Customers = customers.Select(c => new ChaiCountCustomerDto
             {
