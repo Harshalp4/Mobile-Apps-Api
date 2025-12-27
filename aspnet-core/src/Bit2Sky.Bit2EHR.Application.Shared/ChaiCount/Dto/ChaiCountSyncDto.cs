@@ -28,6 +28,14 @@ public class SyncCustomersInput
 }
 
 /// <summary>
+/// Request DTO for syncing credit transactions from mobile to server
+/// </summary>
+public class SyncCreditTransactionsInput
+{
+    public List<CreateOrUpdateChaiCountCreditTransactionDto> CreditTransactions { get; set; }
+}
+
+/// <summary>
 /// Response DTO containing all data for mobile sync
 /// </summary>
 public class PullDataOutput
@@ -36,6 +44,7 @@ public class PullDataOutput
     public List<ChaiCountSaleDto> Sales { get; set; }
     public List<ChaiCountCustomerDto> Customers { get; set; }
     public List<ChaiCountInventoryDto> Inventory { get; set; }
+    public List<ChaiCountCreditTransactionDto> CreditTransactions { get; set; }
     public DateTime ServerTime { get; set; }
 }
 

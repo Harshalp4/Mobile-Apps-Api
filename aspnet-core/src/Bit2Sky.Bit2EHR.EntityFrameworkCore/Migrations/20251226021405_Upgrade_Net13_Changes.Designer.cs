@@ -4,6 +4,7 @@ using Bit2Sky.Bit2EHR.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Metadata;
+using Microsoft.EntityFrameworkCore.Migrations;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 
 #nullable disable
@@ -11,9 +12,11 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace Bit2Sky.Bit2EHR.Migrations
 {
     [DbContext(typeof(Bit2EHRDbContext))]
-    partial class Bit2EHRDbContextModelSnapshot : ModelSnapshot
+    [Migration("20251226021405_Upgrade_Net13_Changes")]
+    partial class Upgrade_Net13_Changes
     {
-        protected override void BuildModel(ModelBuilder modelBuilder)
+        /// <inheritdoc />
+        protected override void BuildTargetModel(ModelBuilder modelBuilder)
         {
 #pragma warning disable 612, 618
             modelBuilder

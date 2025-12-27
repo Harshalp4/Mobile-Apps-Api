@@ -16,6 +16,7 @@ public class ChaiCountCustomer : FullAuditedEntity<Guid>, IMustHaveTenant
     public const int MaxNameLength = 128;
     public const int MaxPhoneLength = 20;
     public const int MaxNotesLength = 512;
+    public const int MaxOrganizationLength = 256;
 
     public int TenantId { get; set; }
 
@@ -77,6 +78,28 @@ public class ChaiCountCustomer : FullAuditedEntity<Guid>, IMustHaveTenant
     /// </summary>
     public DateTime LastSyncedAt { get; set; }
 
+    /// <summary>
+    /// Organization name for Udhari accounts (e.g., company, office)
+    /// </summary>
+    [StringLength(MaxOrganizationLength)]
+    public string Organization { get; set; }
+
+    /// <summary>
+    /// Current credit balance (outstanding dues)
+    /// </summary>
+    [Column(TypeName = "decimal(18,2)")]
+    public decimal CreditBalance { get; set; }
+
+    /// <summary>
+    /// Whether this customer has Udhari (credit) enabled
+    /// </summary>
+    public bool IsUdhariAccount { get; set; }
+
+    /// <summary>
+    /// Total number of free items redeemed through loyalty program
+    /// </summary>
+    public int FreeItemsRedeemed { get; set; }
+
     protected ChaiCountCustomer()
     {
     }
@@ -96,6 +119,9 @@ public class ChaiCountCustomer : FullAuditedEntity<Guid>, IMustHaveTenant
         LoyaltyPoints = 0;
         TotalVisits = 0;
         TotalSpent = 0;
+        CreditBalance = 0;
+        IsUdhariAccount = false;
+        FreeItemsRedeemed = 0;
         LastSyncedAt = DateTime.UtcNow;
     }
 

@@ -30,6 +30,7 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
     private readonly IRepository<ChaiCountLoyaltyConfig, Guid> _loyaltyConfigRepository;
     private readonly IRepository<ChaiCountItemUsage, Guid> _itemUsageRepository;
     private readonly IRepository<ChaiCountStockPurchase, Guid> _stockPurchaseRepository;
+    private readonly IRepository<ChaiCountCreditTransaction, Guid> _creditTransactionRepository;
     private readonly IEmailSender _emailSender;
 
     public ChaiCountAppService(
@@ -43,6 +44,7 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
         IRepository<ChaiCountLoyaltyConfig, Guid> loyaltyConfigRepository,
         IRepository<ChaiCountItemUsage, Guid> itemUsageRepository,
         IRepository<ChaiCountStockPurchase, Guid> stockPurchaseRepository,
+        IRepository<ChaiCountCreditTransaction, Guid> creditTransactionRepository,
         IEmailSender emailSender)
     {
         _itemRepository = itemRepository;
@@ -55,6 +57,7 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
         _loyaltyConfigRepository = loyaltyConfigRepository;
         _itemUsageRepository = itemUsageRepository;
         _stockPurchaseRepository = stockPurchaseRepository;
+        _creditTransactionRepository = creditTransactionRepository;
         _emailSender = emailSender;
     }
 
@@ -280,6 +283,10 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
                         existingCustomer.LastVisitDate = customerDto.LastVisitDate;
                         existingCustomer.HasLeftReview = customerDto.HasLeftReview;
                         existingCustomer.Notes = customerDto.Notes;
+                        existingCustomer.Organization = customerDto.Organization;
+                        existingCustomer.CreditBalance = customerDto.CreditBalance;
+                        existingCustomer.IsUdhariAccount = customerDto.IsUdhariAccount;
+                        existingCustomer.FreeItemsRedeemed = customerDto.FreeItemsRedeemed;
                         existingCustomer.LastSyncedAt = DateTime.UtcNow;
                         await _customerRepository.UpdateAsync(existingCustomer);
                     }
@@ -306,7 +313,11 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
                         TotalSpent = customerDto.TotalSpent,
                         LastVisitDate = customerDto.LastVisitDate,
                         HasLeftReview = customerDto.HasLeftReview,
-                        Notes = customerDto.Notes
+                        Notes = customerDto.Notes,
+                        Organization = customerDto.Organization,
+                        CreditBalance = customerDto.CreditBalance,
+                        IsUdhariAccount = customerDto.IsUdhariAccount,
+                        FreeItemsRedeemed = customerDto.FreeItemsRedeemed
                     };
 
                     await _customerRepository.InsertAsync(newCustomer);
@@ -353,6 +364,10 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
         var inventoryQuery = _inventoryRepository.GetAll()
             .Where(x => x.TenantId == tenantId && !x.IsDeleted);
 
+        var creditTransactionsQuery = _creditTransactionRepository.GetAll()
+            .Include(t => t.Customer)
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted);
+
         // Filter by last sync time if provided
         if (lastSync.HasValue)
         {
@@ -360,12 +375,14 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
             salesQuery = salesQuery.Where(x => x.LastSyncedAt > lastSync.Value || x.LastModificationTime > lastSync.Value);
             customersQuery = customersQuery.Where(x => x.LastSyncedAt > lastSync.Value || x.LastModificationTime > lastSync.Value);
             inventoryQuery = inventoryQuery.Where(x => x.LastSyncedAt > lastSync.Value || x.LastModificationTime > lastSync.Value);
+            creditTransactionsQuery = creditTransactionsQuery.Where(x => x.LastSyncedAt > lastSync.Value || x.LastModificationTime > lastSync.Value);
         }
 
         var items = await itemsQuery.ToListAsync();
         var sales = await salesQuery.ToListAsync();
         var customers = await customersQuery.ToListAsync();
         var inventory = await inventoryQuery.ToListAsync();
+        var creditTransactions = await creditTransactionsQuery.ToListAsync();
 
         return new PullDataOutput
         {
@@ -438,6 +455,10 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
                 LastVisitDate = c.LastVisitDate,
                 HasLeftReview = c.HasLeftReview,
                 Notes = c.Notes,
+                Organization = c.Organization,
+                CreditBalance = c.CreditBalance,
+                IsUdhariAccount = c.IsUdhariAccount,
+                FreeItemsRedeemed = c.FreeItemsRedeemed,
                 LastSyncedAt = c.LastSyncedAt,
                 CreationTime = c.CreationTime,
                 LastModificationTime = c.LastModificationTime
@@ -456,6 +477,23 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
                 LastSyncedAt = i.LastSyncedAt,
                 CreationTime = i.CreationTime,
                 LastModificationTime = i.LastModificationTime
+            }).ToList(),
+            CreditTransactions = creditTransactions.Select(t => new ChaiCountCreditTransactionDto
+            {
+                Id = t.Id,
+                ClientId = t.ClientId,
+                CustomerId = t.CustomerId,
+                CustomerClientId = t.Customer?.ClientId,
+                CustomerName = t.Customer?.Name,
+                TransactionDate = t.TransactionDate,
+                TransactionType = t.TransactionType,
+                Amount = t.Amount,
+                BalanceAfter = t.BalanceAfter,
+                ItemsSummary = t.ItemsSummary,
+                Notes = t.Notes,
+                LastSyncedAt = t.LastSyncedAt,
+                CreationTime = t.CreationTime,
+                LastModificationTime = t.LastModificationTime
             }).ToList(),
             ServerTime = DateTime.UtcNow
         };
@@ -536,6 +574,191 @@ public class ChaiCountAppService : Bit2EHRAppServiceBase, IChaiCountAppService
         }
 
         return result;
+    }
+
+    // ============ Credit Transaction (Udhari) APIs ============
+
+    /// <summary>
+    /// Sync credit transactions from mobile to server
+    /// </summary>
+    public async Task<SyncResult> SyncCreditTransactions(SyncCreditTransactionsInput input)
+    {
+        var result = new SyncResult { SyncedRecords = new List<SyncedRecordInfo>() };
+
+        try
+        {
+            var tenantId = AbpSession.GetTenantId();
+
+            foreach (var transactionDto in input.CreditTransactions)
+            {
+                // Find customer by ClientId
+                var customer = await _customerRepository.FirstOrDefaultAsync(
+                    x => x.ClientId == transactionDto.CustomerClientId && x.TenantId == tenantId);
+
+                if (customer == null)
+                {
+                    Logger.Warn($"Customer with ClientId {transactionDto.CustomerClientId} not found for credit transaction");
+                    continue;
+                }
+
+                var existingTransaction = await _creditTransactionRepository.FirstOrDefaultAsync(
+                    x => x.ClientId == transactionDto.ClientId && x.TenantId == tenantId);
+
+                if (existingTransaction != null)
+                {
+                    // Update if client has newer data
+                    if (transactionDto.LastSyncedAt > existingTransaction.LastSyncedAt)
+                    {
+                        existingTransaction.CustomerId = customer.Id;
+                        existingTransaction.TransactionDate = transactionDto.TransactionDate;
+                        existingTransaction.TransactionType = transactionDto.TransactionType;
+                        existingTransaction.Amount = transactionDto.Amount;
+                        existingTransaction.BalanceAfter = transactionDto.BalanceAfter;
+                        existingTransaction.ItemsSummary = transactionDto.ItemsSummary;
+                        existingTransaction.Notes = transactionDto.Notes;
+                        existingTransaction.LastSyncedAt = DateTime.UtcNow;
+                        await _creditTransactionRepository.UpdateAsync(existingTransaction);
+                    }
+
+                    result.SyncedRecords.Add(new SyncedRecordInfo
+                    {
+                        ClientId = transactionDto.ClientId,
+                        ServerId = existingTransaction.Id,
+                        SyncedAt = DateTime.UtcNow
+                    });
+                }
+                else
+                {
+                    var newTransaction = new ChaiCountCreditTransaction(
+                        Guid.NewGuid(),
+                        tenantId,
+                        transactionDto.ClientId,
+                        customer.Id,
+                        transactionDto.TransactionDate,
+                        transactionDto.TransactionType,
+                        transactionDto.Amount,
+                        transactionDto.BalanceAfter)
+                    {
+                        ItemsSummary = transactionDto.ItemsSummary,
+                        Notes = transactionDto.Notes
+                    };
+
+                    await _creditTransactionRepository.InsertAsync(newTransaction);
+
+                    result.SyncedRecords.Add(new SyncedRecordInfo
+                    {
+                        ClientId = transactionDto.ClientId,
+                        ServerId = newTransaction.Id,
+                        SyncedAt = DateTime.UtcNow
+                    });
+                }
+
+                // Update customer's credit balance to match latest
+                customer.CreditBalance = transactionDto.BalanceAfter;
+                customer.IsUdhariAccount = true;
+                await _customerRepository.UpdateAsync(customer);
+            }
+
+            result.Success = true;
+            result.SyncedCount = result.SyncedRecords.Count;
+        }
+        catch (Exception ex)
+        {
+            result.Success = false;
+            result.ErrorMessage = ex.Message;
+            Logger.Error("Error syncing credit transactions", ex);
+        }
+
+        return result;
+    }
+
+    /// <summary>
+    /// Get credit transactions for a customer
+    /// </summary>
+    public async Task<List<ChaiCountCreditTransactionDto>> GetCreditTransactions(Guid? customerId, DateTime? fromDate, DateTime? toDate)
+    {
+        var tenantId = AbpSession.GetTenantId();
+
+        var query = _creditTransactionRepository.GetAll()
+            .Include(t => t.Customer)
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted);
+
+        if (customerId.HasValue)
+            query = query.Where(x => x.CustomerId == customerId.Value);
+        if (fromDate.HasValue)
+            query = query.Where(x => x.TransactionDate >= fromDate.Value);
+        if (toDate.HasValue)
+            query = query.Where(x => x.TransactionDate <= toDate.Value);
+
+        var transactions = await query.OrderByDescending(x => x.TransactionDate).ToListAsync();
+
+        return transactions.Select(t => new ChaiCountCreditTransactionDto
+        {
+            Id = t.Id,
+            ClientId = t.ClientId,
+            CustomerId = t.CustomerId,
+            CustomerClientId = t.Customer?.ClientId,
+            CustomerName = t.Customer?.Name,
+            TransactionDate = t.TransactionDate,
+            TransactionType = t.TransactionType,
+            Amount = t.Amount,
+            BalanceAfter = t.BalanceAfter,
+            ItemsSummary = t.ItemsSummary,
+            Notes = t.Notes,
+            LastSyncedAt = t.LastSyncedAt,
+            CreationTime = t.CreationTime,
+            LastModificationTime = t.LastModificationTime
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Get Udhari summary (total outstanding credit)
+    /// </summary>
+    public async Task<UdhariSummaryDto> GetUdhariSummary()
+    {
+        var tenantId = AbpSession.GetTenantId();
+
+        // Get all Udhari customers
+        var udhariCustomers = await _customerRepository.GetAll()
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted && x.IsUdhariAccount)
+            .ToListAsync();
+
+        // Get all credit transactions
+        var allTransactions = await _creditTransactionRepository.GetAll()
+            .Where(x => x.TenantId == tenantId && !x.IsDeleted)
+            .ToListAsync();
+
+        var totalCreditGiven = allTransactions.Where(t => t.TransactionType == "credit").Sum(t => t.Amount);
+        var totalPaymentsReceived = allTransactions.Where(t => t.TransactionType == "payment").Sum(t => t.Amount);
+
+        // Get top debtors (customers with highest outstanding balance)
+        var topDebtors = udhariCustomers
+            .Where(c => c.CreditBalance > 0)
+            .OrderByDescending(c => c.CreditBalance)
+            .Take(10)
+            .Select(c => new UdhariCustomerSummaryDto
+            {
+                CustomerId = c.Id,
+                CustomerClientId = c.ClientId,
+                CustomerName = c.Name,
+                Organization = c.Organization,
+                Phone = c.Phone,
+                CreditBalance = c.CreditBalance,
+                LastTransactionDate = allTransactions
+                    .Where(t => t.CustomerId == c.Id)
+                    .OrderByDescending(t => t.TransactionDate)
+                    .FirstOrDefault()?.TransactionDate
+            })
+            .ToList();
+
+        return new UdhariSummaryDto
+        {
+            TotalOutstanding = udhariCustomers.Sum(c => c.CreditBalance),
+            TotalUdhariCustomers = udhariCustomers.Count(c => c.CreditBalance > 0),
+            TotalCreditGiven = totalCreditGiven,
+            TotalPaymentsReceived = totalPaymentsReceived,
+            TopDebtors = topDebtors
+        };
     }
 
     /// <summary>

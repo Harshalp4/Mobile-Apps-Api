@@ -67,6 +67,7 @@ public class Bit2EHRDbContext : AbpZeroDbContext<Tenant, Role, User, Bit2EHRDbCo
     public virtual DbSet<ChaiCountLoyaltyConfig> ChaiCountLoyaltyConfig { get; set; }
     public virtual DbSet<ChaiCountItemUsage> ChaiCountItemUsage { get; set; }
     public virtual DbSet<ChaiCountStockPurchase> ChaiCountStockPurchases { get; set; }
+    public virtual DbSet<ChaiCountCreditTransaction> ChaiCountCreditTransactions { get; set; }
 
     // FinTrack entities
     public virtual DbSet<FtBankAccount> FtBankAccounts { get; set; }
@@ -241,6 +242,19 @@ public class Bit2EHRDbContext : AbpZeroDbContext<Tenant, Role, User, Bit2EHRDbCo
             b.Property(e => e.Quantity).HasPrecision(18, 2);
             b.Property(e => e.CostPerUnit).HasPrecision(18, 2);
             b.Property(e => e.TotalCost).HasPrecision(18, 2);
+        });
+
+        modelBuilder.Entity<ChaiCountCreditTransaction>(b =>
+        {
+            b.HasIndex(e => new { e.TenantId, e.ClientId }).IsUnique();
+            b.HasIndex(e => new { e.TenantId, e.CustomerId });
+            b.HasIndex(e => new { e.TenantId, e.TransactionDate });
+            b.Property(e => e.Amount).HasPrecision(18, 2);
+            b.Property(e => e.BalanceAfter).HasPrecision(18, 2);
+            b.HasOne(e => e.Customer)
+                .WithMany()
+                .HasForeignKey(e => e.CustomerId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         // FinTrack entity configurations

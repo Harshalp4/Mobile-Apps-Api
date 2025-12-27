@@ -34,6 +34,21 @@ public interface IChaiCountAppService : IApplicationService
     Task<SyncResult> SyncInventory(SyncInventoryInput input);
 
     /// <summary>
+    /// Sync credit transactions (Udhari) from mobile to server
+    /// </summary>
+    Task<SyncResult> SyncCreditTransactions(SyncCreditTransactionsInput input);
+
+    /// <summary>
+    /// Get credit transactions for a customer
+    /// </summary>
+    Task<List<ChaiCountCreditTransactionDto>> GetCreditTransactions(Guid? customerId, DateTime? fromDate, DateTime? toDate);
+
+    /// <summary>
+    /// Get Udhari summary (total outstanding credit)
+    /// </summary>
+    Task<UdhariSummaryDto> GetUdhariSummary();
+
+    /// <summary>
     /// Pull all data from server for mobile sync
     /// </summary>
     Task<PullDataOutput> PullData(DateTime? lastSync);

@@ -14,6 +14,10 @@ public class ChaiCountCustomerDto : EntityDto<Guid>
     public DateTime? LastVisitDate { get; set; }
     public bool HasLeftReview { get; set; }
     public string Notes { get; set; }
+    public string Organization { get; set; }
+    public decimal CreditBalance { get; set; }
+    public bool IsUdhariAccount { get; set; }
+    public int FreeItemsRedeemed { get; set; }
     public DateTime LastSyncedAt { get; set; }
     public DateTime CreationTime { get; set; }
     public DateTime? LastModificationTime { get; set; }
@@ -30,5 +34,9 @@ public class CreateOrUpdateChaiCountCustomerDto
     public DateTime? LastVisitDate { get; set; }
     public bool HasLeftReview { get; set; }
     public string Notes { get; set; }
+    public string Organization { get; set; }
+    public decimal CreditBalance { get; set; }
+    public bool IsUdhariAccount { get; set; }
+    public int FreeItemsRedeemed { get; set; }
     public DateTime LastSyncedAt { get; set; }
 }
